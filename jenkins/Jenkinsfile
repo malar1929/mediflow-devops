@@ -1,0 +1,41 @@
+pipeline {
+  agent any
+
+  environment {
+    PYTHON_VERSION = '3.13'
+    APP_DIR = 'backend'
+    FRONTEND_DIR = 'frontend'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        git branch: 'main', url: 'https://github.com/example/mediflow.git'
+      }
+    }
+
+    stage('Backend Install') {
+      steps {
+        sh 'python3 -m venv .venv && . .venv/bin/activate && pip install -r backend/requirements.txt'
+      }
+    }
+
+    stage('Backend Tests') {
+      steps {
+        sh '. .venv/bin/activate && python -m compileall backend'
+      }
+    }
+
+    stage('Frontend Build') {
+      steps {
+        sh 'cd frontend && npm install && npm run build'
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        sh 'docker build -t mediflow:latest .'
+      }
+    }
+  }
+}

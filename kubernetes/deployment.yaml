@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediflow-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mediflow-backend
+  template:
+    metadata:
+      labels:
+        app: mediflow-backend
+    spec:
+      containers:
+        - name: backend
+          image: mediflow:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: FLASK_ENV
+              value: production
+            - name: SQLALCHEMY_DATABASE_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mediflow-secret
+                  key: database-url
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediflow-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mediflow-frontend
+  template:
+    metadata:
+      labels:
+        app: mediflow-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: mediflow-frontend:latest
+          ports:
+            - containerPort: 5173

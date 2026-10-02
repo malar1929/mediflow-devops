@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediflow-backend
+spec:
+  selector:
+    app: mediflow-backend
+  ports:
+    - port: 80
+      targetPort: 5000
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediflow-frontend
+spec:
+  selector:
+    app: mediflow-frontend
+  ports:
+    - port: 80
+      targetPort: 5173
+      protocol: TCP
