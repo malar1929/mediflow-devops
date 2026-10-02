@@ -1,41 +1,133 @@
 pipeline {
-  agent any
+  agent { label 'linux && docker' }
 
-  environment {
-    PYTHON_VERSION = '3.13'
-    APP_DIR = 'backend'
-    FRONTEND_DIR = 'frontend'
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+    timeout(time: 30, unit: 'MINUTES')
   }
 
   stages {
     stage('Checkout') {
       steps {
-        git branch: 'main', url: 'https://github.com/example/mediflow.git'
+        echo 'Checking out the latest MediFlow source from main.'
+        git branch: 'main', url: 'https://github.com/malar1929/mediflow-devops.git'
       }
     }
 
-    stage('Backend Install') {
+    stage('Backend Setup') {
       steps {
-        sh 'python3 -m venv .venv && . .venv/bin/activate && pip install -r backend/requirements.txt'
+        echo 'Creating the backend virtual environment and installing Python dependencies.'
+        sh '''#!/bin/sh
+set -eu
+cd backend
+if [ ! -x .venv/bin/python ]; then
+  python3 -m venv .venv
+fi
+.venv/bin/python -m pip install --disable-pip-version-check -r requirements.txt
+'''
       }
     }
 
-    stage('Backend Tests') {
+    stage('Frontend Setup') {
       steps {
-        sh '. .venv/bin/activate && python -m compileall backend'
+        echo 'Installing locked frontend dependencies and building the React application.'
+        sh '''#!/bin/sh
+set -eu
+cd frontend
+npm ci
+npm run build
+'''
       }
     }
 
-    stage('Frontend Build') {
+    stage('Backend Verification') {
       steps {
-        sh 'cd frontend && npm install && npm run build'
+        echo 'Starting Flask and checking the live /api/health response.'
+        sh '''#!/bin/sh
+set -eu
+cd backend
+export HOST=127.0.0.1
+export PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+export FLASK_ENV=production
+export SQLALCHEMY_DATABASE_URI="sqlite:///$WORKSPACE/.ci-mediflow.db"
+log_file="$WORKSPACE/backend-ci.log"
+.venv/bin/python app.py > "$log_file" 2>&1 &
+server_pid=$!
+cleanup() {
+  kill "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+if ! .venv/bin/python - "$PORT" "$server_pid" <<'PY'
+import json
+import os
+import sys
+import time
+from urllib.error import URLError
+from urllib.request import urlopen
+
+port = int(sys.argv[1])
+server_pid = int(sys.argv[2])
+last_error = None
+
+for _ in range(30):
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as response:
+            payload = json.load(response)
+            if response.status != 200 or payload.get("status") != "ok":
+                raise SystemExit(f"Unexpected health response: {payload}")
+            print(f"Health check passed: HTTP {response.status}, {payload}")
+            break
+    except (URLError, TimeoutError, OSError) as error:
+        last_error = error
+        try:
+            os.kill(server_pid, 0)
+        except OSError:
+            raise SystemExit(f"Flask exited before becoming healthy: {last_error}")
+        time.sleep(1)
+else:
+    raise SystemExit(f"Health check timed out: {last_error}")
+PY
+then
+  cat "$log_file"
+  exit 1
+fi
+'''
       }
     }
 
     stage('Docker Build') {
       steps {
-        sh 'docker build -t mediflow:latest .'
+        echo 'Building Docker image mediflow:latest.'
+        sh 'docker build --pull -t mediflow:latest .'
       }
+    }
+
+    stage('Docker Compose Validation') {
+      steps {
+        echo 'Validating docker-compose.yml with Docker Compose.'
+        sh 'docker compose -f docker-compose.yml config --quiet'
+      }
+    }
+
+    stage('Pipeline Success') {
+      steps {
+        echo 'All MediFlow CI/CD pipeline stages completed successfully.'
+      }
+    }
+  }
+
+  post {
+    success {
+      echo 'MediFlow pipeline completed successfully.'
+    }
+    failure {
+      echo 'MediFlow pipeline failed. Review the stage output above.'
+    }
+    always {
+      echo "Pipeline finished with status: ${currentBuild.currentResult ?: 'UNKNOWN'}"
     }
   }
 }
